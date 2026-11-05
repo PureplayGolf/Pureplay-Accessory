@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Pureplay Accessory - minimal overlay</title>
+<style>
+  body { font: 14px/1.5 system-ui, sans-serif; margin: 16px; }
+  #status { font-weight: 600; }
+  #ready { margin: 8px 0; }
+  pre { background: #f3f3f3; padding: 8px; height: 60vh; overflow: auto; }
+</style>
+</head>
+<body>
+
+<!--
+  The smallest useful Pureplay Accessory client: connect, pair, subscribe, and print events.
+  Open this file in a browser while Pureplay is running. Add ?host=192.168.1.20 to the address
+  to connect to a game on another PC.
+-->
+
+<div id="status">Connecting...</div>
+<div id="ready"></div>
+<pre id="log"></pre>
+
+<script>
+const HOST = new URLSearchParams(location.search).get("host") || "localhost";
+const URL_ = "ws://" + HOST + ":9770/";
+const TOKEN_KEY = "ppaccessory_token";
+
+let retryMs = 1000;
+
+function connect() {
+  // Two things the transport requires: the "binary" subprotocol, and binary frames.
+  const ws = new WebSocket(URL_, "binary");
+  ws.binaryType = "arraybuffer";
+
+  ws.onopen = () => {
+    retryMs = 1000;
+    status("Connected - pairing...");
+    // Always send pair first. Send back the saved token, if we have one.
+    ws.send(JSON.stringify({ type: "pair", data: {
+      client: "Minimal Overlay",
+      token: localStorage.getItem(TOKEN_KEY)
+    }}));
+  };
+
+  ws.onmessage = (e) => {
+    const msg = JSON.parse(new TextDecoder("utf-8").decode(e.data));
+
+    if (msg.type === "pairing.pending") {
+      status("Approve the connection in Pureplay.");
+    }
+    else if (msg.type === "paired") {
+      // Save the token so the player is not asked again next time.
+      localStorage.setItem(TOKEN_KEY, msg.data.token);
+      status("Paired (" + msg.data.scopes.join(", ") + ")");
+      ws.send(JSON.stringify({ type: "subscribe", data: { snapshot: true } }));
+    }
+    else if (msg.type === "response" && !msg.ok) {
+      status("Refused: " + msg.error.code + " - " + msg.error.message);
+    }
+    else if (msg.type === "event") {
+      // The snapshot carries readiness too, so a late joiner is never out of step.
+      if (msg.event === "shot.ready_changed") { showReady(msg.data); }
+      if (msg.event === "state.snapshot")     { showReady(msg.data.readiness); }
+      log(msg.seq + "  " + msg.event + "  " + JSON.stringify(msg.data));
+    }
+  };
+
+  ws.onclose = () => {
+    // Reconnect with a backoff: 1s, 2s, 4s ... up to 30s. A snapshot on resubscribe resyncs us.
+    status("Disconnected - retrying in " + (retryMs / 1000) + "s");
+    setTimeout(connect, retryMs);
+    retryMs = Math.min(retryMs * 2, 30000);
+  };
+}
+
+function showReady(r) {
+  if (!r) { return; }
+  document.getElementById("ready").textContent = r.ready
+    ? "Ready to play" + (r.controllable ? " - controls available" : "")
+    : "Waiting: " + (r.blockers.join(", ") || "-");
+}
+
+function status(s) { document.getElementById("status").textContent = s; }
+function log(s) {
+  const el = document.getElementById("log");
+  el.textContent += s + "\n";
+  el.scrollTop = el.scrollHeight;
+}
+
+connect();
+</script>
+</body>
+</html>

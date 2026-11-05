@@ -1,0 +1,642 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pureplay Accessory Test Client</title>
+<style>
+  :root {
+    --bg: #f6f7f9;  --panel: #ffffff; --ink: #14171a; --muted: #5c6670;
+    --line: #dfe3e8; --accent: #1f6feb; --ok: #1a7f37; --err: #cf222e;
+    --warn: #9a6700; --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #0d1117; --panel: #161b22; --ink: #e6edf3; --muted: #8b949e;
+      --line: #30363d; --accent: #4493f8; --ok: #3fb950; --err: #f85149; --warn: #d29922;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #0d1117; --panel: #161b22; --ink: #e6edf3; --muted: #8b949e;
+    --line: #30363d; --accent: #4493f8; --ok: #3fb950; --err: #f85149; --warn: #d29922;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 16px; background: var(--bg); color: var(--ink);
+    font: 14px/1.5 system-ui, -apple-system, Segoe UI, sans-serif;
+  }
+  h1 { font-size: 18px; margin: 0 0 2px; }
+  h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .05em;
+       color: var(--muted); margin: 0 0 10px; }
+  .sub { color: var(--muted); margin: 0 0 16px; font-size: 13px; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; align-items: start; }
+  @media (max-width: 900px) { .grid { grid-template-columns: 1fr; } }
+  .panel { background: var(--panel); border: 1px solid var(--line);
+           border-radius: 8px; padding: 14px; margin-bottom: 12px; }
+  label { display: block; font-size: 12px; color: var(--muted); margin: 8px 0 3px; }
+  input, select, textarea {
+    width: 100%; padding: 6px 8px; border: 1px solid var(--line); border-radius: 5px;
+    background: var(--bg); color: var(--ink); font-family: inherit; font-size: 13px;
+  }
+  textarea { font-family: var(--mono); font-size: 12px; resize: vertical; }
+  button {
+    padding: 6px 12px; border: 1px solid var(--line); border-radius: 5px;
+    background: var(--panel); color: var(--ink); cursor: pointer; font-size: 13px;
+  }
+  button:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+  button:disabled { opacity: .45; cursor: not-allowed; }
+  button.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+  button.primary:hover:not(:disabled) { color: #fff; opacity: .9; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: flex-end; }
+  .row > * { flex: 1 1 auto; }
+  .row > button { flex: 0 0 auto; }
+  .btns { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 10px; }
+  .pill { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 12px;
+          border: 1px solid var(--line); margin: 2px 3px 2px 0; }
+  .pill.ok   { color: var(--ok);   border-color: var(--ok); }
+  .pill.err  { color: var(--err);  border-color: var(--err); }
+  .pill.warn { color: var(--warn); border-color: var(--warn); }
+  .kv { display: grid; grid-template-columns: auto 1fr; gap: 2px 12px; font-size: 13px; }
+  .kv dt { color: var(--muted); }
+  .kv dd { margin: 0; font-family: var(--mono); font-size: 12px; word-break: break-all; }
+  #log { height: 320px; overflow-y: auto; font-family: var(--mono); font-size: 11.5px;
+         background: var(--bg); border: 1px solid var(--line); border-radius: 5px; padding: 8px; }
+  .le { padding: 2px 0; border-bottom: 1px solid var(--line); white-space: pre-wrap;
+        word-break: break-all; }
+  .le:last-child { border-bottom: 0; }
+  .le .t { color: var(--muted); }
+  .le.tx   .d { color: var(--accent); }
+  .le.rx   .d { color: var(--ink); }
+  .le.good .d { color: var(--ok); }
+  .le.bad  .d { color: var(--err); }
+  .le.note .d { color: var(--warn); }
+  .note { font-size: 12px; color: var(--muted); margin-top: 8px; }
+  .hint { font-size: 12px; color: var(--warn); margin-top: 8px; }
+  table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  th, td { text-align: left; padding: 3px 6px; border-bottom: 1px solid var(--line); }
+  th { color: var(--muted); font-weight: 500; font-size: 11px; text-transform: uppercase; }
+  code { font-family: var(--mono); font-size: 12px; }
+</style>
+</head>
+<body>
+
+<h1>Pureplay Accessory test client</h1>
+<p class="sub">
+  Exercises every feature of the Pureplay Accessory API: pairing, subscription and event filters,
+  snapshots, every event, all seven commands, the readiness gate, rate limiting and the error codes.
+  No dependencies - open this file directly in a browser.
+</p>
+
+<div class="panel">
+  <h2>Connection</h2>
+  <div class="row">
+    <div style="flex:2 1 160px"><label for="host">Host</label><input id="host" value="127.0.0.1"></div>
+    <div style="flex:1 1 90px"><label for="port">Port</label><input id="port" value="9770"></div>
+    <div style="flex:2 1 160px"><label for="client">Client name</label><input id="client" value="Accessory Test Client"></div>
+    <button id="btnConnect" class="primary">Connect</button>
+    <button id="btnDisconnect" disabled>Disconnect</button>
+  </div>
+  <div style="margin-top:10px">
+    <span id="connPill" class="pill err">disconnected</span>
+    <span id="serverPill" class="pill" hidden></span>
+    <span id="scopePill" class="pill" hidden></span>
+  </div>
+</div>
+
+<div class="grid">
+  <div>
+    <div class="panel">
+      <h2>1 - Pair</h2>
+      <p class="note">
+        A fresh connection may send only <code>pair</code>; anything else returns
+        <code>unauthorised</code>. The token is kept in <code>localStorage</code> under
+        <code>ppaccessory_token</code> and replayed on reconnect.
+      </p>
+      <label for="token">Saved token</label>
+      <input id="token" placeholder="(none yet - pair to receive one)">
+      <div class="btns">
+        <button id="btnPair" class="primary" disabled>Pair</button>
+        <button id="btnPairNoToken" disabled>Pair as new client</button>
+        <button id="btnForget">Forget token</button>
+      </div>
+      <div id="pairHint" class="hint" hidden></div>
+    </div>
+
+    <div class="panel">
+      <h2>2 - Subscribe</h2>
+      <label for="filters">Event filters (comma separated, empty = everything)</label>
+      <input id="filters" placeholder="shot.*, turn.changed">
+      <p class="note">
+        Only a <em>trailing</em> family wildcard works - <code>shot.*</code> matches,
+        <code>*.changed</code> does not.
+      </p>
+      <div class="btns">
+        <button id="btnSubscribe" disabled>Subscribe</button>
+        <button id="btnSubscribeSnap" disabled>Subscribe + snapshot</button>
+        <button id="btnStateGet" disabled>state.get</button>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>3 - Readiness gate</h2>
+      <div id="readiness"><p class="note">No readiness seen yet.</p></div>
+    </div>
+
+    <div class="panel">
+      <h2>5 - Error paths</h2>
+      <p class="note">Each button provokes one specific documented failure.</p>
+      <div class="btns">
+        <button id="btnBurst" disabled>Burst 40 commands -> rate_limited</button>
+        <button id="btnBadType" disabled>bogus type -> bad_request</button>
+        <button id="btnBadJson" disabled>malformed JSON -> bad_request</button>
+        <button id="btnBadPlayer" disabled>wrong playerId -> not_ready</button>
+      </div>
+      <label for="raw" style="margin-top:12px">Raw message</label>
+      <textarea id="raw" rows="3">{ "type": "state.get" }</textarea>
+      <div class="btns"><button id="btnRaw" disabled>Send raw</button></div>
+    </div>
+  </div>
+
+  <div>
+    <div class="panel">
+      <h2>4 - Commands</h2>
+      <p class="note">
+        All writes need the <code>control</code> scope and a controllable shot. Positions are
+        <strong>metres</strong>; <code>playerId</code> is optional and defaults to the active shooter.
+      </p>
+
+      <label for="playerId">playerId override (blank = active shooter)</label>
+      <input id="playerId" placeholder="(blank)">
+
+      <label>aim.set target [x, y, z] in metres</label>
+      <div class="row">
+        <input id="aimX" value="0" inputmode="decimal">
+        <input id="aimY" value="0" inputmode="decimal">
+        <input id="aimZ" value="0" inputmode="decimal">
+        <button id="btnAimSet" disabled>aim.set</button>
+      </div>
+      <p class="note">Tip: copy a live value from the snapshot's <code>players[].aim</code> and edit it.</p>
+
+      <label for="deltaDeg">aim.nudge deltaDeg (server clamps to +/-45)</label>
+      <div class="row">
+        <input id="deltaDeg" value="5" inputmode="decimal">
+        <button id="btnNudgeL" disabled>&lt;- nudge</button>
+        <button id="btnNudgeR" disabled>nudge -></button>
+        <button id="btnAimReset" disabled>aim.reset</button>
+      </div>
+
+      <label for="club">club.set</label>
+      <div class="row">
+        <select id="club"></select>
+        <button id="btnClubSet" disabled>club.set</button>
+        <button id="btnClubNext" disabled>club.next</button>
+        <button id="btnClubPrev" disabled>club.prev</button>
+        <button id="btnClubReset" disabled>club.reset</button>
+      </div>
+      <p class="note">
+        <code>aim.reset</code> / <code>club.reset</code> restore the value the shot had
+        <em>before this API first changed it</em>, not the game default.
+      </p>
+    </div>
+
+    <div class="panel">
+      <h2>Snapshot</h2>
+      <div id="snapSummary"><p class="note">No snapshot yet.</p></div>
+      <div class="btns">
+        <button id="btnToggleRaw">Show raw JSON</button>
+        <button id="btnCopySnap">Copy JSON</button>
+      </div>
+      <textarea id="snapRaw" rows="12" readonly hidden></textarea>
+    </div>
+  </div>
+</div>
+
+<div class="panel">
+  <h2>Message log</h2>
+  <div class="btns" style="margin:0 0 8px">
+    <button id="btnClear">Clear</button>
+    <label style="flex:0 0 auto;margin:0;display:flex;align-items:center;gap:6px;color:var(--ink)">
+      <input type="checkbox" id="chkEvents" checked style="width:auto"> show events
+    </label>
+    <span id="seqPill" class="pill">seq -</span>
+  </div>
+  <div style="margin-bottom:10px">
+    <span style="color:var(--muted);font-size:12px">events seen</span><br>
+    <span id="tally"></span>
+  </div>
+  <div id="log"></div>
+</div>
+
+<script>
+"use strict";
+
+// ---- club names, exactly as the spec spells them ------------------------------
+const CLUBS = ["Driver",
+  "Wood2","Wood3","Wood4","Wood5","Wood6","Wood7","Wood8","Wood9",
+  "Hybrid2","Hybrid3","Hybrid4","Hybrid5","Hybrid6","Hybrid7","Hybrid8","Hybrid9",
+  "Iron1","Iron2","Iron3","Iron4","Iron5","Iron6","Iron7","Iron8","Iron9",
+  "PitchingWedge","GapWedge","SandWedge","LobWedge","Putter"];
+
+// Every event in the Version 1 spec, so the tally shows which you have not seen yet.
+const EVENTS = ["state.snapshot", "shot.ready_changed",
+                "match.started", "match.ended", "match.paused", "match.resumed", "context.invalidated",
+                "hole.started", "hole.completed", "turn.changed", "phase.changed",
+                "player.joined", "player.left", "player.changed", "player.club_changed", "player.aim_changed",
+                "shot.initialized", "shot.launched", "shot.completed", "shot.cancelled", "shot.replayed",
+                "lie.changed", "ruling.required", "ruling.resolved", "score.updated"];
+
+const TOKEN_KEY = "ppaccessory_token";
+const $ = (id) => document.getElementById(id);
+
+let ws = null;
+let reqSeq = 0;
+let pending = new Map();   // request id -> description, for pairing responses to their sends
+let lastSeq = null;        // server event seq, per connection
+let paired = false;
+let canControl = false;
+let lastSnapshot = null;
+let tally = {};
+
+function renderTally() {
+  const names = EVENTS.slice();
+  // Anything the server sends that this tool does not know about still gets a chip.
+  Object.keys(tally).forEach(n => { if (names.indexOf(n) < 0) { names.push(n); } });
+  $("tally").innerHTML = names.map(n => {
+    const c = tally[n] || 0;
+    return '<span class="pill ' + (c ? "ok" : "") + '">' + esc(n) + " " + c + "</span>";
+  }).join("");
+}
+
+function countEvent(name) {
+  tally[name] = (tally[name] || 0) + 1;
+  renderTally();
+}
+
+// localStorage can throw in private mode; never let that break the page.
+function tokenLoad() { try { return localStorage.getItem(TOKEN_KEY) || ""; } catch { return ""; } }
+function tokenSave(v) { try { localStorage.setItem(TOKEN_KEY, v); } catch {} }
+function tokenClear() { try { localStorage.removeItem(TOKEN_KEY); } catch {} }
+
+// ---- logging ---------------------------------------------------------------
+function log(kind, text) {
+  const el = document.createElement("div");
+  el.className = "le " + kind;
+  const now = new Date().toISOString().substr(11, 12);
+  el.innerHTML = '<span class="t">' + now + '</span> <span class="d"></span>';
+  el.querySelector(".d").textContent = text;
+  const box = $("log");
+  const atBottom = box.scrollTop + box.clientHeight >= box.scrollHeight - 30;
+  box.appendChild(el);
+  if (atBottom) { box.scrollTop = box.scrollHeight; }
+  while (box.children.length > 500) { box.removeChild(box.firstChild); }
+}
+
+// ---- sending ---------------------------------------------------------------
+function send(obj, describe) {
+  if (!ws || ws.readyState !== WebSocket.OPEN) { log("bad", "not connected"); return null; }
+  if (!obj.id) { obj.id = "r" + (++reqSeq); }
+  pending.set(obj.id, describe || obj.type);
+  const text = JSON.stringify(obj);
+  ws.send(text);
+  log("tx", "-> " + text);
+  return obj.id;
+}
+
+function sendCommand(command, data, describe) {
+  const d = Object.assign({}, data);
+  const pid = $("playerId").value.trim();
+  if (pid !== "") { d.playerId = Number(pid); }
+  return send({ type: "command", command: command, data: d }, describe || command);
+}
+
+// ---- connection ------------------------------------------------------------
+function setConnected(on) {
+  $("connPill").textContent = on ? "connected" : "disconnected";
+  $("connPill").className = "pill " + (on ? "ok" : "err");
+  $("btnConnect").disabled = on;
+  $("btnDisconnect").disabled = !on;
+  $("btnPair").disabled = !on;
+  $("btnPairNoToken").disabled = !on;
+  $("btnBadJson").disabled = !on;
+  $("btnRaw").disabled = !on;
+  if (!on) {
+    paired = false; canControl = false; lastSeq = null;
+    $("serverPill").hidden = true;
+    $("scopePill").hidden = true;
+    $("seqPill").textContent = "seq -";
+    setPairedUi();
+  }
+}
+
+function setPairedUi() {
+  const gated = ["btnSubscribe","btnSubscribeSnap","btnStateGet","btnBadType","btnBadPlayer"];
+  gated.forEach(id => { $(id).disabled = !paired; });
+  const writes = ["btnAimSet","btnNudgeL","btnNudgeR","btnAimReset",
+                  "btnClubSet","btnClubNext","btnClubReset","btnBurst","btnClubPrev"];
+  writes.forEach(id => { $(id).disabled = !(paired && canControl); });
+
+  const sp = $("scopePill");
+  if (paired) {
+    sp.hidden = false;
+    sp.textContent = canControl ? "scopes: read + control" : "scopes: read only";
+    sp.className = "pill " + (canControl ? "ok" : "warn");
+  }
+}
+
+function connect() {
+  tally = {};            // seq and the event tally are both per-connection
+  renderTally();
+  const url = "ws://" + $("host").value.trim() + ":" + $("port").value.trim();
+  log("note", "connecting to " + url);
+  // "binary" is the only subprotocol Pureplay offers, so ask for it by name.
+  try { ws = new WebSocket(url, "binary"); }
+  catch (e) { log("bad", "could not open socket: " + e.message); return; }
+  ws.binaryType = "arraybuffer";
+
+  ws.onopen = () => { setConnected(true); log("good", "socket open - expecting a hello frame"); };
+
+  ws.onclose = (e) => {
+    setConnected(false);
+    log("note", "socket closed (code " + e.code + (e.reason ? ", " + e.reason : "") + ")");
+  };
+
+  ws.onerror = () => {
+    log("bad", "socket error - is the game running with Pureplay Accessory enabled on this port?");
+  };
+
+  // Pureplay sends binary frames, never text, so each message arrives as an ArrayBuffer rather than
+  // a string. Decode as UTF-8 before parsing.
+  ws.onmessage = (e) => {
+    if (typeof e.data === "string") { onFrameText(e.data); }
+    else if (e.data instanceof ArrayBuffer) { onFrameText(new TextDecoder("utf-8").decode(e.data)); }
+    else if (typeof Blob !== "undefined" && e.data instanceof Blob) { e.data.text().then(onFrameText); }
+    else { log("bad", "<- frame of unexpected type: " + Object.prototype.toString.call(e.data)); }
+  };
+}
+
+function onFrameText(text) {
+  let msg;
+  try { msg = JSON.parse(text); }
+  catch {
+    // Every message should be a single JSON object. Show the start of anything that is not.
+    log("bad", "<- UNPARSEABLE frame (first 80 chars): " + String(text).slice(0, 80));
+    return;
+  }
+  route(msg, text);
+}
+
+// ---- receiving -------------------------------------------------------------
+function route(msg, rawText) {
+  const t = msg.type;
+
+  if (t === "event") {
+    countEvent(msg.event || "(unnamed)");
+    if (typeof msg.seq === "number") {
+      if (lastSeq !== null && msg.seq !== lastSeq + 1) {
+        log("note", "seq gap: expected " + (lastSeq + 1) + ", got " + msg.seq);
+      }
+      lastSeq = msg.seq;
+      $("seqPill").textContent = "seq " + msg.seq;
+    }
+    if (msg.event === "state.snapshot") {
+      lastSnapshot = msg.data;
+      renderSnapshot(msg.data);
+      if (msg.data && msg.data.readiness) { renderReadiness(msg.data.readiness); }
+      log("good", "<- snapshot" + (msg.requestId ? " (requestId " + msg.requestId + ")" : ""));
+      return;
+    }
+    if (msg.event === "shot.ready_changed") { renderReadiness(msg.data); }
+    if ($("chkEvents").checked) { log("rx", "<- " + rawText); }
+    return;
+  }
+
+  if (t === "hello") {
+    const d = msg.data || {};
+    $("serverPill").hidden = false;
+    $("serverPill").textContent = d.game + " | " + d.protocol + " v" + d.version;
+    log("good", "<- hello: " + rawText);
+    // Auto-replay a saved token, which is what a real accessory would do.
+    if ($("token").value.trim() !== "") {
+      log("note", "replaying saved token");
+      doPair(true);
+    }
+    return;
+  }
+
+  if (t === "pairing.pending") {
+    const d = msg.data || {};
+    const el = $("pairHint");
+    el.hidden = false;
+    el.textContent = "Approve the connection in Pureplay" +
+      (d.expiresInSec ? " - the request expires in " + d.expiresInSec + "s." : ".");
+    log("note", "<- pairing.pending: " + rawText);
+    return;
+  }
+
+  if (t === "paired") {
+    const d = msg.data || {};
+    paired = true;
+    canControl = Array.isArray(d.scopes) && d.scopes.indexOf("control") >= 0;
+    if (d.token) { $("token").value = d.token; tokenSave(d.token); }
+    $("pairHint").hidden = true;
+    setPairedUi();
+    log("good", "<- paired: " + rawText);
+    return;
+  }
+
+  if (t === "response") {
+    const what = pending.get(msg.id) || msg.id || "(no id)";
+    pending.delete(msg.id);
+    if (msg.ok) {
+      log("good", "<- ok [" + what + "] " + JSON.stringify(msg.data || {}));
+    } else {
+      const err = msg.error || {};
+      log("bad", "<- ERROR [" + what + "] " + err.code + ": " + err.message +
+                 (err.blockers ? "  blockers=" + JSON.stringify(err.blockers) : "") +
+                 (err.retryAfterMs ? "  retryAfterMs=" + err.retryAfterMs : ""));
+      if (err.code === "unauthorised" && !paired) { showPairHint(err.message); }
+    }
+    return;
+  }
+
+  log("rx", "<- (unrecognised type) " + rawText);
+}
+
+function showPairHint(message) {
+  const el = $("pairHint");
+  el.hidden = false;
+  el.textContent = "Pairing refused - \"" + message + "\". If your build does not have the approval " +
+    "prompt yet, new apps cannot pair - see Implementation status in docs/protocol.md.";
+}
+
+// ---- rendering -------------------------------------------------------------
+function renderReadiness(r) {
+  if (!r) { return; }
+  const parts = [];
+  parts.push('<span class="pill ' + (r.ready ? "ok" : "err") + '">ready: ' + !!r.ready + "</span>");
+  parts.push('<span class="pill ' + (r.controllable ? "ok" : "err") + '">controllable: ' + !!r.controllable + "</span>");
+  if (typeof r.playerId === "number") { parts.push('<span class="pill">playerId ' + r.playerId + "</span>"); }
+  let html = "<div>" + parts.join("") + "</div>";
+
+  if (r.blockers && r.blockers.length) {
+    html += '<div style="margin-top:6px"><span style="color:var(--muted);font-size:12px">blockers</span><br>' +
+            r.blockers.map(b => '<span class="pill warn">' + esc(b) + "</span>").join("") + "</div>";
+  }
+  if (r.allowedCommands && r.allowedCommands.length) {
+    html += '<div style="margin-top:6px"><span style="color:var(--muted);font-size:12px">allowedCommands</span><br>' +
+            r.allowedCommands.map(c => '<span class="pill ok">' + esc(c) + "</span>").join("") + "</div>";
+  }
+  $("readiness").innerHTML = html;
+}
+
+function esc(s) {
+  return String(s).replace(/[&<>"]/g, c => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;" }[c]));
+}
+
+function num(v, dp) {
+  return (typeof v === "number") ? v.toFixed(dp === undefined ? 1 : dp) : "-";
+}
+
+function vec(a) {
+  return Array.isArray(a) && a.length === 3
+    ? "[" + a.map(n => n.toFixed(2)).join(", ") + "]" : "-";
+}
+
+function renderSnapshot(s) {
+  if (!s) { return; }
+  $("snapRaw").value = JSON.stringify(s, null, 2);
+
+  const se = s.session || {}, co = s.course || {}, ho = s.hole || {},
+        tu = s.turn || {}, sh = s.shot || {}, li = s.lie || {};
+
+  let html = '<dl class="kv">' +
+    row("phase", se.phase) +
+    row("matchActive", se.matchActive) +
+    row("scoring", (se.scoringModel || "-") + (se.isTeamGame ? " (team)" : "")) +
+    row("course", (co.displayName || "-") + " | " + (co.holeCount || 0) + " holes, par " + (co.totalPar || 0)) +
+    row("hole", ho.number ? ("#" + ho.number + " | par " + ho.par + " | SI " + ho.strokeIndex) : "-") +
+    row("pin", vec(ho.pin)) +
+    row("turn", (tu.activeShooterId >= 0 ? "player " + tu.activeShooterId : "-") +
+                (tu.remainingPlayerIds && tu.remainingPlayerIds.length
+                  ? " (remaining " + tu.remainingPlayerIds.join(", ") + ")" : "")) +
+    row("shot", sh.playerId >= 0
+          ? ("player " + sh.playerId + " | hole " + sh.holeNumber + " | stroke " + sh.strokeNumber +
+             " | " + (sh.state || "-")) : "-") +
+    row("lie", li.surface || "-") +
+    "</dl>";
+
+  if (Array.isArray(s.players) && s.players.length) {
+    html += '<table style="margin-top:10px"><tr>' +
+      "<th>id</th><th>name</th><th>club</th><th>lie</th><th>strokes</th>" +
+      "<th>to par</th><th>dist (m)</th><th>ball</th><th>aim</th></tr>";
+    s.players.forEach(p => {
+      const me = p.isLocal ? " *" : "";
+      html += "<tr>" +
+        "<td>" + p.playerId + me + "</td>" +
+        "<td>" + esc(p.name || "-") + "</td>" +
+        "<td>" + esc(p.club || "-") + "</td>" +
+        "<td>" + esc(p.lie || "-") + "</td>" +
+        "<td>" + ((p.hole && p.hole.strokes) || 0) + "</td>" +
+        "<td>" + (p.toPar || 0) + "</td>" +
+        "<td>" + num(p.distanceToHoleM) + "</td>" +
+        "<td>" + vec(p.ball) + "</td>" +
+        "<td>" + vec(p.aim) + "</td>" +
+        "</tr>";
+    });
+    html += "</table><p class='note'>* local player</p>";
+  } else {
+    html += "<p class='note'>No players - the empty state the spec defines for the main menu.</p>";
+  }
+  $("snapSummary").innerHTML = html;
+}
+
+function row(k, v) {
+  return "<dt>" + esc(k) + "</dt><dd>" + esc(v === undefined || v === null || v === "" ? "-" : v) + "</dd>";
+}
+
+// ---- actions ---------------------------------------------------------------
+function doPair(withToken) {
+  const data = { client: $("client").value.trim() || "Accessory Test Client" };
+  const tok = $("token").value.trim();
+  if (withToken && tok !== "") { data.token = tok; }
+  send({ type: "pair", data: data }, withToken && tok ? "pair (with token)" : "pair (new client)");
+}
+
+function init() {
+  CLUBS.forEach(c => {
+    const o = document.createElement("option");
+    o.value = c; o.textContent = c;
+    $("club").appendChild(o);
+  });
+  $("club").value = "Iron7";
+  $("token").value = tokenLoad();
+
+  $("btnConnect").onclick    = connect;
+  $("btnDisconnect").onclick = () => { if (ws) { ws.close(); } };
+
+  $("btnPair").onclick        = () => doPair(true);
+  $("btnPairNoToken").onclick = () => doPair(false);
+  $("btnForget").onclick      = () => { tokenClear(); $("token").value = ""; log("note", "token forgotten"); };
+
+  $("btnSubscribe").onclick     = () => send({ type: "subscribe", data: { events: parseFilters() } }, "subscribe");
+  $("btnSubscribeSnap").onclick = () => send({ type: "subscribe", data: { events: parseFilters(), snapshot: true } }, "subscribe+snapshot");
+  $("btnStateGet").onclick      = () => send({ type: "state.get" }, "state.get");
+
+  $("btnAimSet").onclick   = () => sendCommand("aim.set",
+      { target: [Number($("aimX").value), Number($("aimY").value), Number($("aimZ").value)] });
+  $("btnNudgeL").onclick   = () => sendCommand("aim.nudge", { deltaDeg: -Math.abs(Number($("deltaDeg").value)) }, "aim.nudge left");
+  $("btnNudgeR").onclick   = () => sendCommand("aim.nudge", { deltaDeg:  Math.abs(Number($("deltaDeg").value)) }, "aim.nudge right");
+  $("btnAimReset").onclick = () => sendCommand("aim.reset", {});
+  $("btnClubSet").onclick  = () => sendCommand("club.set", { club: $("club").value });
+  $("btnClubNext").onclick = () => sendCommand("club.next", {});
+  $("btnClubReset").onclick= () => sendCommand("club.reset", {});
+
+  // Error paths.
+  $("btnClubPrev").onclick = () => sendCommand("club.prev", {});
+  $("btnBadType").onclick  = () => send({ type: "definitely.not.a.type" }, "bogus type");
+  $("btnBadJson").onclick  = () => {
+    ws.send("{ this is not json ");
+    log("tx", "-> { this is not json   (deliberately malformed)");
+  };
+  $("btnBadPlayer").onclick = () => send(
+    { type: "command", command: "club.next", data: { playerId: 9999 } }, "wrong playerId");
+
+  $("btnBurst").onclick = () => {
+    log("note", "bursting 40 club.next commands to trip the token bucket");
+    for (let i = 0; i < 40; i++) { sendCommand("club.next", {}, "burst " + (i + 1)); }
+  };
+
+  $("btnRaw").onclick = () => {
+    let o;
+    try { o = JSON.parse($("raw").value); }
+    catch (e) { log("bad", "raw box is not valid JSON: " + e.message); return; }
+    send(o, "raw");
+  };
+
+  $("btnToggleRaw").onclick = () => {
+    const ta = $("snapRaw");
+    ta.hidden = !ta.hidden;
+    $("btnToggleRaw").textContent = ta.hidden ? "Show raw JSON" : "Hide raw JSON";
+  };
+  $("btnCopySnap").onclick = () => {
+    if (!lastSnapshot) { log("note", "no snapshot to copy"); return; }
+    navigator.clipboard.writeText(JSON.stringify(lastSnapshot, null, 2))
+      .then(() => log("note", "snapshot copied"))
+      .catch(() => log("bad", "clipboard refused"));
+  };
+
+  $("btnClear").onclick = () => { $("log").innerHTML = ""; };
+
+  setConnected(false);
+  renderTally();
+  log("note", "ready - press Connect");
+}
+
+function parseFilters() {
+  return $("filters").value.split(",").map(s => s.trim()).filter(s => s !== "");
+}
+
+init();
+</script>
+</body>
+</html>
