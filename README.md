@@ -38,9 +38,3 @@ ws.onmessage = (e) => {
 
 A client that treats messages as text connects without error and then fails on the first one.
 
-## Feedback
-
-- Questions, ideas and requests: [Discussions](https://github.com/PureplayGolf/pureplay-accessory/discussions)
-- Mistakes in the spec or the examples: [Issues](https://github.com/PureplayGolf/pureplay-accessory/issues)
-
-The [spec](docs/protocol.md#feedback-wanted) lists the questions we most want answered.
