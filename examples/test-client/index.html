@@ -146,10 +146,11 @@
       <h2>5 - Error paths</h2>
       <p class="note">Each button provokes one specific documented failure.</p>
       <div class="btns">
-        <button id="btnBurst" disabled>Burst 40 commands -> rate_limited</button>
+        <button id="btnBurst" disabled>Burst 50 commands -> rate_limited</button>
         <button id="btnBadType" disabled>bogus type -> bad_request</button>
         <button id="btnBadJson" disabled>malformed JSON -> bad_request</button>
         <button id="btnBadPlayer" disabled>wrong playerId -> not_ready</button>
+        <button id="btnLongId" disabled>65-char id -> bad_request</button>
       </div>
       <label for="raw" style="margin-top:12px">Raw message</label>
       <textarea id="raw" rows="3">{ "type": "state.get" }</textarea>
@@ -185,7 +186,7 @@
         <button id="btnAimReset" disabled>aim.reset</button>
       </div>
 
-      <label for="club">club.set</label>
+      <label for="club">club.set (from the snapshot's bag)</label>
       <div class="row">
         <select id="club"></select>
         <button id="btnClubSet" disabled>club.set</button>
@@ -230,18 +231,11 @@
 <script>
 "use strict";
 
-// ---- club names, exactly as the spec spells them ------------------------------
-const CLUBS = ["Driver",
-  "Wood2","Wood3","Wood4","Wood5","Wood6","Wood7","Wood8","Wood9",
-  "Hybrid2","Hybrid3","Hybrid4","Hybrid5","Hybrid6","Hybrid7","Hybrid8","Hybrid9",
-  "Iron1","Iron2","Iron3","Iron4","Iron5","Iron6","Iron7","Iron8","Iron9",
-  "PitchingWedge","GapWedge","SandWedge","LobWedge","Putter"];
-
 // Every event in the Version 1 spec, so the tally shows which you have not seen yet.
 const EVENTS = ["state.snapshot", "shot.ready_changed",
                 "match.started", "match.ended", "match.paused", "match.resumed", "context.invalidated",
                 "hole.started", "hole.completed", "turn.changed", "phase.changed",
-                "player.joined", "player.left", "player.changed", "player.club_changed", "player.aim_changed",
+                "player.joined", "player.left", "player.changed", "player.club_changed", "player.aim_changed", "player.bag_changed",
                 "shot.initialized", "shot.launched", "shot.completed", "shot.cancelled", "shot.replayed",
                 "lie.changed", "ruling.required", "ruling.resolved", "score.updated"];
 
@@ -329,7 +323,7 @@ function setConnected(on) {
 }
 
 function setPairedUi() {
-  const gated = ["btnSubscribe","btnSubscribeSnap","btnStateGet","btnBadType","btnBadPlayer"];
+  const gated = ["btnSubscribe","btnSubscribeSnap","btnStateGet","btnBadType","btnBadPlayer","btnLongId"];
   gated.forEach(id => { $(id).disabled = !paired; });
   const writes = ["btnAimSet","btnNudgeL","btnNudgeR","btnAimReset",
                   "btnClubSet","btnClubNext","btnClubReset","btnBurst","btnClubPrev"];
@@ -406,6 +400,7 @@ function route(msg, rawText) {
       return;
     }
     if (msg.event === "shot.ready_changed") { renderReadiness(msg.data); }
+    if (msg.event === "player.bag_changed") { send({ type: "state.get" }, "state.get (bag changed)"); }
     if ($("chkEvents").checked) { log("rx", "<- " + rawText); }
     return;
   }
@@ -506,6 +501,17 @@ function renderSnapshot(s) {
   if (!s) { return; }
   $("snapRaw").value = JSON.stringify(s, null, 2);
 
+  const bagOwner = (s.players || []).find(p => p.isLocal && Array.isArray(p.bag));
+  const sel = $("club");
+  sel.innerHTML = "";
+  (bagOwner ? bagOwner.bag : []).forEach(c => {
+    const o = document.createElement("option");
+    o.value = c.clubId;
+    o.textContent = c.name + " (" + c.type + ")";
+    sel.appendChild(o);
+  });
+  if (bagOwner && bagOwner.clubId) { sel.value = bagOwner.clubId; }
+
   const se = s.session || {}, co = s.course || {}, ho = s.hole || {},
         tu = s.turn || {}, sh = s.shot || {}, li = s.lie || {};
 
@@ -563,12 +569,6 @@ function doPair(withToken) {
 }
 
 function init() {
-  CLUBS.forEach(c => {
-    const o = document.createElement("option");
-    o.value = c; o.textContent = c;
-    $("club").appendChild(o);
-  });
-  $("club").value = "Iron7";
   $("token").value = tokenLoad();
 
   $("btnConnect").onclick    = connect;
@@ -587,7 +587,7 @@ function init() {
   $("btnNudgeL").onclick   = () => sendCommand("aim.nudge", { deltaDeg: -Math.abs(Number($("deltaDeg").value)) }, "aim.nudge left");
   $("btnNudgeR").onclick   = () => sendCommand("aim.nudge", { deltaDeg:  Math.abs(Number($("deltaDeg").value)) }, "aim.nudge right");
   $("btnAimReset").onclick = () => sendCommand("aim.reset", {});
-  $("btnClubSet").onclick  = () => sendCommand("club.set", { club: $("club").value });
+  $("btnClubSet").onclick  = () => sendCommand("club.set", { clubId: $("club").value });
   $("btnClubNext").onclick = () => sendCommand("club.next", {});
   $("btnClubReset").onclick= () => sendCommand("club.reset", {});
 
@@ -600,10 +600,13 @@ function init() {
   };
   $("btnBadPlayer").onclick = () => send(
     { type: "command", command: "club.next", data: { playerId: 9999 } }, "wrong playerId");
+  $("btnLongId").onclick = () => send(
+    { type: "state.get", id: "x".repeat(65) }, "65-char id");
 
   $("btnBurst").onclick = () => {
-    log("note", "bursting 40 club.next commands to trip the token bucket");
-    for (let i = 0; i < 40; i++) { sendCommand("club.next", {}, "burst " + (i + 1)); }
+    // The bucket holds 40, so 40 can all succeed on an idle connection; 50 guarantees refusals.
+    log("note", "bursting 50 club.next commands to trip the token bucket");
+    for (let i = 0; i < 50; i++) { sendCommand("club.next", {}, "burst " + (i + 1)); }
   };
 
   $("btnRaw").onclick = () => {

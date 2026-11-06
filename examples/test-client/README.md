@@ -16,8 +16,9 @@ No server, no build step, no dependencies.
 3. Press **Connect**. A `hello` message should arrive straight away.
 4. Press **Pair as new client** and approve the request in Pureplay.
 
-New apps can only pair in a Pureplay build that has the approval prompt. Check
-[Implementation status](../../docs/protocol.md#implementation-status) before you start.
+Pureplay must have **Allow apps from** set to *This PC* or *Your network* in Settings > Accessories,
+or nothing listens on the port. See [Implementation status](../../docs/protocol.md#implementation-status)
+for what the current build supports.
 
 ## A suggested test pass
 
@@ -26,12 +27,13 @@ Work down the numbered panels.
 | Step | What to do | What it shows you |
 |---|---|---|
 | Connect | Press **Connect** | The `hello` message and what the build supports |
-| 1 Pair | **Pair as new client**, then reload the page and press **Pair** | A token is issued, and the saved token reconnects without asking the player again |
+| 1 Pair | **Pair as new client**, then **Deny** in the game | `pairing.pending` (no `seq`), then `unauthorised` and close `4403`. Pair again at once: `rate_limited` with `retryAfterMs`, then close `4429` - the pairing cooldown |
+| | After the cooldown, pair and allow, then reload the page and press **Pair** | A token is issued, and the saved token reconnects without asking the player again |
 | 2 Subscribe | **Subscribe + snapshot** | The acknowledgement, then a snapshot before any live event |
 | | Set filters to `shot.*` and subscribe again | Trailing-wildcard family filters. `*.changed` matches nothing, by design |
 | 3 Readiness | Play a shot and watch the panel | `shot.ready_changed` firing on each transition, with its blockers |
 | 4 Commands | `club.set`, `club.next`, `aim.nudge`, then the two resets | Each reply reports the resulting state, so clamping or snapping is visible |
-| 5 Error paths | Each button | One specific rejection code apiece |
+| 5 Error paths | Each button | One specific rejection code apiece, including a 65-character `id` |
 
 Try a command while a shot is in progress, or on another player's turn. It should come back
 `not_ready` with the blocker list attached.
