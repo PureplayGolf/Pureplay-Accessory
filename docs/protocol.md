@@ -1,11 +1,11 @@
 # Pureplay Accessory API
 
-Version 1 - preview for feedback.
+Version 1 - early access. Revised 2026-11-10.
 
-> **Status: preview.** Version 1 is published so the people who will build against it can tell us
-> what is wrong with it before it ships. Nothing here is in a public Pureplay release yet, and parts
-> of it are still being built. See [Implementation status](#implementation-status) for what works
-> today.
+> **Status: early access.** Version 1 ships in Pureplay's early-access builds. Until Pureplay leaves
+> early access it can still change in ways that break existing apps; every such change is listed in
+> [Changes](#changes) with the date of the game update that carries it. See
+> [Implementation status](#implementation-status) for what works today.
 
 ## What it is
 
@@ -1040,10 +1040,45 @@ or the examples.
 
 ---
 
+## Changes
+
+`session.apiVersion` stays `1` through early access. Changes are dated instead; check this list when a
+Pureplay update lands.
+
+### 2026-11-10
+
+Breaking:
+
+- Absent values are `null` instead of a placeholder: readiness `shotId` (was `""`) and `playerId`
+  (was `-1`), in the snapshot and `shot.ready_changed`; `players[].ball` and `aim` (were
+  `[0, 0, 0]`); `session.scoringModel` at the main menu (was `""`); `id` on a response with no request
+  id to echo (was `""`).
+- The snapshot's `shot` is `null` between shots, from `shot.completed` until the next
+  `shot.initialized`.
+- `hole.started.yards` is measured from the tee all players share, and is `null` when they are on
+  different tees. It used to follow the round's default tee.
+- `aim.reset` and `club.reset` apply Pureplay's default aim and suggested club. They used to undo
+  what your app had changed during the shot.
+- New error code `not_allowed`, for a command that is not in `readiness.allowedCommands` or that the
+  game refuses. `allowedCommands` now leaves out what the current drill or match does not accept.
+- A `playerId` that is not in the match is `bad_request` "Unknown player." (was `not_ready`).
+- `context.invalidated` is `ended` when leaving after a completed round (was `loading`), and a single
+  `ended` when quitting mid-round (was `reset` then `loading`).
+
+Other changes:
+
+- `pair` while new apps are turned off is answered `forbidden_scope` and then closed `4403`. The
+  socket used to stay open.
+- `pair` without a token on a connection that is already paired is `bad_request` "Already paired.".
+- A `command` message with a missing or non-string `command` is `bad_request`.
+- Event and command names are case-insensitive.
+- `shot.cancelled` with `superseded` is sent as soon as play moves past an unplayed shot.
+- On joined machines, `lie.changed` is sent once per shot, after the host's ball comes to rest.
+- New snapshot field `session.paused`.
+
 ## Implementation status
 
-Nothing in Version 1 is in a public Pureplay release yet. Everything below exists in Pureplay
-development builds. **Verified** means it has been exercised end to end against a live game.
+Version 1 ships in Pureplay's early-access builds. **Verified** means it has been exercised end to end against a live game.
 **Built** means the code is in place, with the in-game pass still to run. **Planned** means
 designed, not built. This table is updated as parts land.
 
