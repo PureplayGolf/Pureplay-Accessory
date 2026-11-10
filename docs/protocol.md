@@ -39,8 +39,8 @@ In Pureplay, open **Settings > Accessories**. Three switches matter:
   interface). The tab shows the address apps should connect to, on port **9770** by default.
 - **Ask about new apps** - when off, new apps are turned away and only previously approved apps
   connect.
-- **Allow aim and club** - the master switch for commands. When off, every app is read-only
-  whatever it was granted.
+- **Let Apps Change Aim and Club** - the master switch for commands. When off, every app is
+  read-only whatever it was granted.
 
 Changes take effect when the player presses Apply or Save. Changing *Allow apps from* drops every
 connection; approved apps reconnect with their saved token.
@@ -48,6 +48,11 @@ connection; approved apps reconnect with their saved token.
 If your app runs on the same PC as the game, use `localhost` with *This PC*. If it runs on a phone,
 tablet or a second PC, the player must choose *Your network* and you use the game PC's address. UDP
 multicast is a possible expansion in a later version.
+
+> **IPv4 only.** Pureplay listens on IPv4 (`127.0.0.1` for *This PC*, every IPv4 interface for
+> *Your network*). On some platforms `localhost` resolves to the IPv6 address `::1` first, and a
+> client that does not fall back to IPv4 reports **connection refused** even though the game is
+> listening. If you see that, connect to `127.0.0.1` instead of `localhost`.
 
 ---
 
@@ -59,7 +64,8 @@ A complete working client. Paste into an HTML file and open it while the game is
 <pre id="log"></pre>
 <script>
 // Two things are required by the transport:
-//   1. ask for the "binary" subprotocol - it is the only one the server offers;
+//   1. ask for the "binary" subprotocol - it is the only one the server offers, and the
+//      handshake response echoes it (Sec-WebSocket-Protocol: binary);
 //   2. read frames as binary - the server never sends text frames, so decode before parsing.
 const ws = new WebSocket("ws://localhost:9770/", "binary");
 ws.binaryType = "arraybuffer";
@@ -180,19 +186,22 @@ Show the user something like "Approve the connection in Pureplay", then wait.
 countdown starts; a request behind another one waits silently first. The rules around the prompt:
 
 - One pending request per device address. A second `pair` from the same address while one is
-  waiting gets `bad_request`, as does a second `pair` on the socket that is already waiting.
+  waiting gets `bad_request`, as does a second `pair` on the socket that is already waiting, and a
+  `pair` without a token on a socket that is already paired ("Already paired.").
 - After a request from your address is **denied, times out, or its app is removed** in Pureplay,
   further `pair` messages from that address are answered `rate_limited` with `retryAfterMs` (two
   minutes by default) and the socket then closes `4429`. No prompt is shown. Honour
   `retryAfterMs` before trying again.
 - A valid saved token is never subject to the queue or the cooldown.
 - If the player has turned off **Ask about new apps**, `pair` without a valid token is answered
-  `forbidden_scope` and the socket stays open.
+  `forbidden_scope` and the socket closes `4403`. Tell the user to turn it back on in Settings >
+  Accessories; do not retry automatically.
 - Pureplay accepts a limited number of connections (eight by default). Beyond that a socket is
   closed `4429` without a `hello`.
 
-Every refusal that closes the socket is a `response` first (`unauthorised` or `rate_limited`,
-carrying your `pair` message's `id`), then the close frame with the code from the table below.
+Every refusal of a `pair` that closes the socket is a `response` first (`unauthorised`,
+`forbidden_scope` or `rate_limited`, carrying your `pair` message's `id`), then the close frame with
+the code from the table below.
 
 On success, whether by prompt or by a valid saved token:
 
@@ -214,7 +223,12 @@ also send commands. The player chooses at the prompt, so **do not assume you hav
 check for it and hide your control UI if it is absent.
 
 The player can see every paired app in Settings > Accessories and remove any of them at any time.
-Removing an app sends it an `unauthorised` response and closes its connection with `4401`.
+Removing an app sends it an `unauthorised` response and closes its connection with `4401`. That
+response answers nothing you sent, so its `id` is `null`.
+
+The game knows your app only by its token. The name and address are labels for the player. An app
+that loses its token and pairs again is a new app: the player is asked again, and the old entry stays
+in Settings until they remove it.
 
 ### 3. Subscribe
 
@@ -226,8 +240,11 @@ Removing an app sends it an `unauthorised` response and closes its connection wi
 ```
 
 - `events` accepts exact names or a **trailing family wildcard** such as `shot.*`. Patterns like
-  `*.changed` are not supported. Omit `events` entirely to receive everything. Note that `shot.*`
-  includes `shot.ready_changed`.
+  `*.changed` are not supported. Omit `events`, or send an empty list, to receive everything. Note
+  that `shot.*` includes `shot.ready_changed`.
+- A name that matches no event is accepted without error and simply never matches, so check
+  spelling against `hello.capabilities.events`.
+- Subscribing again replaces your filter; it does not add to it.
 - `snapshot: true` sends the full current state immediately. Recommended.
 
 **You receive no events until you subscribe.** Before that, a paired connection gets only
@@ -260,6 +277,14 @@ Every event looks like this:
 - `data` holds the payload documented below.
 - Entity identifiers (`matchId`, `shotId`, `playerId`, `rulingId`) always live **inside `data`**,
   never in the envelope.
+
+**Names are case-insensitive; field names are not.** Pureplay matches message types' event and
+command names (`club.next`, a subscription's `shot.*`) without regard to case, and always sends them
+in lower case. JSON property names must be spelled exactly as documented.
+
+**`id` is optional.** Any message you send may carry an `id` of up to 64 characters, and the
+`response` to it echoes it back. A message without one is still answered, with `"id": null`. A
+response the game sends unprompted (your app was removed) also has `"id": null`.
 
 If `seq` jumps, you missed something. Request a fresh snapshot (see below).
 
@@ -318,23 +343,31 @@ When something is in the way:
 ```
 
 - **`ready`** - the game is genuinely waiting for this shot to be played.
-- **`controllable`** - *your* connection may send commands for this player right now. This is
-  distinct from your granted scope: scope says whether you are authorised at all, `controllable`
-  says whether the game currently permits it.
-- **`allowedCommands`** - which commands will be accepted. A ranked or restricted mode can shrink
-  this list, so drive your UI from it rather than hard-coding our rules.
+- **`controllable`** - the game will accept commands for this player right now from an app that
+  holds the `control` scope. It is the same for every connected app: a read-only app sees it too, and
+  still may not send commands. Scope says whether you are authorised at all, `controllable` says
+  whether the game currently permits it.
+- **`allowedCommands`** - the commands the game accepts **right now**: a subset of
+  `hello.capabilities.commands`, which is everything this build knows. It is empty when
+  `controllable` is false. Inside a training drill that aims for the player there are no `aim.*`
+  commands, and `club.reset` is absent when Pureplay's club suggestion is off for the match or the
+  player. A command outside this list is answered `not_allowed`. Drive your UI from it rather than
+  hard-coding our rules.
 - **`blockers`** - why not, when `ready` or `controllable` is false.
+- **`shotId`** is the shot waiting to be played, and `null` when there is none (between one shot
+  being recorded and the next being set up). **`playerId`** is the player who is up, `null` when
+  nobody is.
 
 Blocker values:
 
 | Blocker | Meaning |
 |---|---|
 | `not_in_play` | No round in progress, or still loading |
-| `interrupted` | The match is paused (the in-round menu is open), or the game is between phases |
+| `interrupted` | The match is paused, or the game is between phases |
 | `not_your_turn` | No player is up, or the player who is up is seated on another machine |
 | `shot_in_progress` | The ball is moving or the shot is still being resolved |
 | `awaiting_decision` | The game is waiting on the player for a ruling that blocks play |
-| `controls_disabled` | The player has turned off **Allow aim and club** in Settings > Accessories |
+| `controls_disabled` | The player has turned off **Let Apps Change Aim and Club** in Settings > Accessories |
 
 More than one can be present. An empty list with `ready: true` means go. `controls_disabled` is
 the one blocker that does not affect `ready`: you can see `ready: true, controllable: false,
@@ -362,24 +395,30 @@ Example ids below (`match-123`, `shot-42`, `ruling-9`) are illustrative. Real `m
 ### Lifecycle, in order
 
 - Loading a course with no round in play: `context.invalidated { reason: "loading" }`.
-- The first hole begins: `match.started`, then `hole.started`.
+- The first hole begins: `match.started`, then `hole.started`. (`phase.changed` to `InitHole`
+  comes just before both: the phase is published first, and its arrival is what starts the round.)
 - Every later hole: `hole.started`.
-- The round finishes: `match.ended { reason: "completed" }`.
+- The round finishes: `match.ended { reason: "completed" }`. The results stay on screen.
+- The player leaves those results (to the menu or another course): `context.invalidated
+  { reason: "ended" }`.
 - The player quits to the menu mid-round: `match.ended { reason: "abandoned" }`, then
   `context.invalidated { reason: "ended" }`.
 - A practice restart mid-round: `match.ended { reason: "abandoned" }`, then
   `context.invalidated { reason: "reset" }`.
 
-`match.*` events are only sent for a round whose start Pureplay published to you. A client that
-connects mid-round sees no `match.started`; the snapshot has everything it needs.
+`match.started` is sent once, when the round starts. A client that connects mid-round never sees
+it; its snapshot has everything it needs. `match.paused`, `match.resumed` and `match.ended` go to
+every subscriber while a round is in progress, including one that connected mid-round. The current
+pause state is `session.paused` in the snapshot.
 
 ### Multiplayer
 
 The API is meant to run on the machine that is **hosting** the round. On a machine that joined
 someone else's round, readiness is approximate (it may never report `shot_in_progress`), and the
-shot family (`shot.*`), `lie.changed`, `hole.completed` and the answers in `ruling.resolved` are
-not sent. `handedness`, `profileId` and the club in `shot.initialized` are known only for players
-seated on the connected machine.
+shot family (`shot.*`), `hole.completed` and the answers in `ruling.resolved` are not sent.
+`lie.changed` is sent there, once per shot when the host's resting position arrives, with `shotId`
+`null` and never with reason `teed`. `handedness`, `profileId` and the club in `shot.initialized`
+are known only for players seated on the connected machine.
 
 ### Match
 
@@ -404,8 +443,9 @@ was scored. `toPar` is `null` unless the scoring model is `Stroke`.
 ```json
 { "matchId": "match-123" }
 ```
-Sent when the player opens and closes the in-round menu, which pauses the game. While paused,
-readiness carries the `interrupted` blocker.
+Sent when the game pauses and resumes. While paused, readiness carries the `interrupted` blocker.
+**Current builds have no in-round menu that pauses the game, so these events are not sent yet** and
+`session.paused` stays `false`. Handle them anyway: they will arrive when a pause returns.
 
 **`context.invalidated`**
 ```json
@@ -422,8 +462,10 @@ command to return to a safe neutral state.** `reason` is one of `loading`, `rese
 { "matchId": "match-123", "holeNumber": 7, "par": 4, "strokeIndex": 3,
   "yards": 410, "pin": [420.0, 91.0, 4.1], "playerIds": [1, 2] }
 ```
-`pin` is the cup in play. `yards` is measured from the active player's tee and is `null` when the
-course has no yardage for that tee.
+`pin` is the cup in play. This event is sent before the game picks who tees off, so `yards` is
+measured from the tee all the players share. It is `null` when the players are on different tees, and
+when the course has no yardage for the shared tee. Read `hole.yards` from the snapshot once a turn
+has started to get the yardage from the active player's tee.
 
 **`hole.completed`**
 ```json
@@ -478,9 +520,12 @@ reported here; they have their own events.
   "currentClubId": "9b1c0000-0000-0000-0000-000000000002",
   "reason": "user_selected" }
 ```
-`reason` is one of `user_selected`, `api_command`, `auto` (Pureplay's own suggestion at the start
-of a turn). `previous` is `null` for the first club of a turn. Sent for players seated on the
-connected machine. `previousClubId` / `currentClubId` are bag ids (see *The bag*); `null` when the held club is not a bag entry.
+`reason` is one of `user_selected`, `api_command`, `auto` (Pureplay's own suggestion, or the club
+carried over, at the start of a turn). `previous` is the club held before the change, carried over
+from the previous turn when this is the first change of a turn; it is `null` only when Pureplay has
+not seen a club for that player yet. Sent for players seated on the connected machine.
+`previousClubId` / `currentClubId` are bag ids (see *The bag*); `null` when the held club is not a
+bag entry.
 
 **`player.aim_changed`**
 ```json
@@ -489,7 +534,8 @@ connected machine. `previousClubId` / `currentClubId` are bag ids (see *The bag*
   "reason": "api_command" }
 ```
 `previous` or `current` is `null` when the aim marker is hidden (on the green, or close enough to
-aim straight at the cup).
+aim straight at the cup). `reason` has the same values as `player.club_changed`: `user_selected`,
+`api_command` or `auto`.
 
 **`player.bag_changed`** - the player's bag changed (a club added, removed or edited, or another bag
 made active). Carries the complete bag; replace your copy.
@@ -545,15 +591,20 @@ total spin and axis.
 ```
 `reason` is one of `discarded` (a played shot the game dropped, for example a scramble candidate the
 team did not pick) or `superseded` (a shot that was set up but never played: a skipped turn, a
-withdrawal, a reset).
+withdrawal, a reset). A superseded shot is cancelled as soon as play moves past it: when the turn
+passes to someone else, the hole or round ends, or the course unloads (before `match.ended` and
+`context.invalidated`). A mulligan never cancels anything; see `shot.replayed`.
 
 **`shot.replayed`**
 ```json
 { "shotId": "shot-51", "replacesShotId": "shot-42",
   "playerId": 1, "reason": "mulligan" }
 ```
-`reason` is one of `mulligan`, `rehit`. Sent straight after the replacement's `shot.initialized`,
-which is the next time that player is up. An out-of-bounds re-hit is automatic and needs no ruling.
+`reason` is one of `mulligan`, `rehit`. Sent straight after the replacement's `shot.initialized`.
+A mulligan replays at once: the same player is straight back up. A re-hit comes the next time that
+player is up; an out-of-bounds re-hit is automatic and needs no ruling. What a mulligan costs depends
+on the round's rules (free, one stroke, or stroke and distance), so do not count it yourself: read
+the `score.updated` that follows.
 
 **`lie.changed`**
 ```json
@@ -614,7 +665,7 @@ hosting the round) `resolved` is `false`, `selectedAction` and `dropLocation` ar
   "holeStrokes": 3, "totalStrokes": 32,
   "grossToPar": -1, "netToPar": -2,
   "holeResult": "Birdie", "holedOut": true,
-  "final": true, "reason": "shot_completed" }
+  "final": true, "reason": "hole_completed" }
 ```
 `reason` is one of `shot_completed`, `ruling_resolved`, `hole_completed`, `corrected` (a change
 with no single cause, such as a score recomputed). `final` is `true` only with reason
@@ -622,8 +673,8 @@ with no single cause, such as a score recomputed). `final` is `true` only with r
 `Birdie`, `Par`, `Bogey`, `DoubleBogey`, clamped at both ends (an albatross reports `Eagle`, a
 triple bogey reports `DoubleBogey`).
 
-`grossToPar` and `holeResult` are `null` before the player's first stroke on the hole. `netToPar`
-is `null` in match play. `holedOut` is `false` for a conceded hole. In team games `teamIndex` is
+`grossToPar`, `netToPar` and `holeResult` are `null` before the player's first stroke on the hole.
+`netToPar` is also `null` in match play. `holedOut` is `false` for a conceded hole. In team games `teamIndex` is
 populated; one event is still sent per player, never per team.
 
 Pureplay publishes the interpreted result so you never have to reimplement our scoring rules.
@@ -636,7 +687,8 @@ Everything at once. Most overlays need only this plus `turn.changed` and `shot.c
 
 ```json
 { "session": { "apiVersion": 1, "matchId": "match-123", "phase": "AwaitShot",
-               "isTeamGame": false, "scoringModel": "Stroke", "matchActive": true },
+               "isTeamGame": false, "scoringModel": "Stroke", "matchActive": true,
+               "paused": false },
   "course":  { "courseId": "StAndrews", "displayName": "St Andrews",
                "holeCount": 18, "totalPar": 72 },
   "hole":    { "number": 7, "par": 4, "strokeIndex": 3, "yards": 410,
@@ -678,8 +730,14 @@ Everything at once. Most overlays need only this plus `turn.changed` and `shot.c
   "ruling":  null }
 ```
 
-- `session.scoringModel` is one of `Stroke`, `Stableford`, `MatchPlay`.
-- `shot.state` is `AwaitingLaunch` while the game waits for the shot, else `Resolving`.
+- `session.scoringModel` is one of `Stroke`, `Stableford`, `MatchPlay`, and `null` in the main menu.
+- `session.paused` is `true` while the game is paused (between `match.paused` and
+  `match.resumed`). Current builds never pause a round, so it is always `false` for now.
+- `players[].ball` and `players[].aim` are `null` when the ball is not placed yet or the aim marker
+  is hidden.
+- `shot` is the shot waiting to be played or in flight. `shot.state` is `AwaitingLaunch` while the
+  game waits for the shot, else `Resolving`. Once the shot is recorded, `shot` is `null` until the
+  next one is set up.
 - `players[].toPar` is **gross** strokes over par across the holes that player has completed.
 - `players[].lie` and `lie.surface` are the course's own surface names, not a closed list. Common
   values: `Tee`, `Fairway`, `Fringe`, `Semi`, `Rough`, `DeepRough`, `Bunker`, `Green`, `Water`,
@@ -687,7 +745,8 @@ Everything at once. Most overlays need only this plus `turn.changed` and `shot.c
 - `ruling` is the active player's pending ruling, else the first one that blocks play. A ruling
   that is only an offer (hazard relief, an unplayable drop) is shown here without the
   `awaiting_decision` blocker.
-- `hole.yards` is `null` when the course has no yardage for the player's tee.
+- `hole.yards` is measured from the active player's tee, and is `null` when the course has no
+  yardage for that tee.
 
 ### The bag
 
@@ -711,9 +770,10 @@ The snapshot is always valid, whatever the game is doing. Sections that do not c
 
 | Situation | What the snapshot looks like |
 |---|---|
-| Main menu | `session.matchActive` false; `course`, `hole`, `turn`, `shot`, `lie`, `ruling` all `null`; `players` empty |
-| Match loading | `session.matchActive` false, `course` populated, rest `null`, `readiness.blockers` contains `not_in_play` |
+| Main menu | `session.matchActive` false, `session.matchId` and `session.scoringModel` `null`; `course`, `hole`, `turn`, `shot`, `lie`, `ruling` all `null`; `players` empty |
+| Match loading | `session.matchActive` false, `course` populated, `hole`, `turn`, `shot`, `lie`, `ruling` `null`, `readiness.blockers` contains `not_in_play`. `players` may already list the players as they join |
 | No active player | `turn.activeShooterId` `null`, `shot` `null` |
+| Between shots (the result is showing, or a ruling is pending) | `shot` `null`, `readiness.shotId` `null`; `turn` still shows who just played |
 | Ball not yet placed | `shot` populated, `lie` `null` |
 | Player holed out | player's `hole.holedOut` true, `shot` `null` until the next turn |
 | Ruling pending | `ruling` populated; `readiness.blockers` contains `awaiting_decision` when it blocks play |
@@ -760,7 +820,8 @@ smoothing and limits rather than as an absolute target.
 
 ## Sending commands
 
-Only if you were granted the `control` scope **and** `readiness.controllable` is true.
+Only if you were granted the `control` scope **and** `readiness.controllable` is true, and only
+the commands in `readiness.allowedCommands`.
 
 ```json
 { "type": "command", "id": "c-17", "command": "club.set",
@@ -791,13 +852,14 @@ is hidden), and `aim.nudge` adds the `deltaDeg` actually applied after clamping:
 |---|---|---|
 | `aim.nudge` | `{ playerId?, deltaDeg }` | Turn the aim left (negative) or right (positive) |
 | `aim.set` | `{ playerId?, target: [x,y,z] }` | Aim at a world position |
-| `aim.reset` | `{ playerId? }` | Undo your changes and restore the aim Pureplay had set |
+| `aim.reset` | `{ playerId? }` | Apply Pureplay's default aim for the ball where it lies |
 | `club.set` | `{ playerId?, clubId }` | Select a club from the player's bag |
 | `club.next` / `club.prev` | `{ playerId? }` | Step through the player's bag |
-| `club.reset` | `{ playerId? }` | Undo your changes and restore the club Pureplay had selected |
+| `club.reset` | `{ playerId? }` | Select Pureplay's suggested club for the ball where it lies |
 
-`playerId` is optional and defaults to the active player. If you send it, it must be the active
-player, or the command is refused with `not_ready`.
+`command` is required; a `command` message without one is refused with `bad_request`.
+`playerId` is optional and defaults to the active player. A `playerId` that is not in the round is
+refused with `bad_request`; a real player who is not up is refused with `not_ready`.
 
 **`aim.nudge`** rotates the current aim point about the ball by `deltaDeg`. If no aim is set yet it
 starts from Pureplay's default aim for the shot. It is a one-shot delta, not the held-key nudge the
@@ -806,19 +868,18 @@ player has on screen, so the two do not move in lockstep.
 **`club.set`** installs the bag club with that `clubId`, fitting included. An id that is not in the
 active bag (including one that was removed after you read it) is refused with `bad_request`.
 
-**What the reset commands restore.** The first time an API command changes the aim or the club for a
-shot, Pureplay remembers what it was beforehand. `aim.reset` and `club.reset` put that value back,
-so the player ends up on whatever they would have had if your app had never touched it.
+**What the reset commands do.** They are stateless: neither remembers anything about earlier
+commands, yours or anyone else's.
 
-- Aim and club are remembered **independently** - resetting one leaves the other alone.
-- The remembered value is captured on your first aim or club command **for that shot**, and cleared
-  when the shot ends. Reset always refers to the current shot, never an earlier one.
-- If your app has not changed the club this shot, `club.reset` succeeds and does nothing.
-- If your app has not changed the aim this shot, `aim.reset` restores **Pureplay's default aim**
-  for the shot, which also discards any aim the player placed themselves. Only send `aim.reset`
-  after one of your own aim commands.
-- Otherwise reset undoes **your app's** changes, not the player's. If the player moved the aim
-  themselves after you did, resetting still returns to the pre-API value.
+- `aim.reset` applies **Pureplay's default aim** for the ball where it lies, the same aim the game
+  sets at the start of a turn and the player's own reset key applies. It discards any aim placed
+  before, by your app, another app or the player. Where no aim marker applies (on the green, or close
+  enough to aim straight at the cup) the marker is hidden and the reply's `aim` is `null`.
+- `club.reset` selects **Pureplay's suggested club** for the ball where it lies (the putter on the
+  green, else the club for the distance), from the player's own bag. It is only available where the
+  round and the player have club suggestion turned on; elsewhere it is absent from
+  `allowedCommands` and refused with `not_allowed`.
+- Aim and club are independent: resetting one leaves the other alone.
 
 Give your users a way to reach these. Any app that changes aim or club should be able to hand
 control back - it matters most for accessibility controllers and button boxes, where a player can
@@ -838,8 +899,8 @@ can help the player line up. It cannot swing for them.
   planned (see Implementation status).
 - Rate limits are **per connection**: 20 commands per second, burst 40. The allowance starts empty
   when you connect and fills at 20 per second, so a command sent in the first few milliseconds of a
-  connection can be rate limited. Commands refused for scope, readiness or the wrong player do not
-  consume the allowance; a command refused for a bad argument does.
+  connection can be rate limited. Commands refused for scope, readiness, an unknown or wrong
+  player, or `not_allowed` do not consume the allowance; a command refused for a bad argument does.
 
 A rate-limited response tells you when to try again:
 
@@ -855,11 +916,12 @@ Drive your UI from `readiness` and most rejections disappear. The codes:
 | Code | Meaning |
 |---|---|
 | `unauthorised` | Not paired yet; or your token is dead, your request was denied, timed out, or the app was removed (the socket then closes with the matching code below) |
-| `forbidden_scope` | You were granted read-only, the player has turned off **Allow aim and club**, or (on `pair`) the player has turned off **Ask about new apps** |
+| `forbidden_scope` | You were granted read-only, the player has turned off **Let Apps Change Aim and Club**, or (on `pair`, which then closes `4403`) the player has turned off **Ask about new apps** |
 | `not_ready` | The game will not accept that right now - see `blockers` on the response |
+| `not_allowed` | The game is ready, but not for this command: it is not in `readiness.allowedCommands` (a drill that aims for the player, club suggestion off), or the game refused the placement |
 | `rate_limited` | Slow down, see `retryAfterMs` - also sent to `pair` during the pairing cooldown |
 | `unknown_command` | Check spelling, or the game is older than your app |
-| `bad_request` | Malformed JSON, unknown message type, a value out of range, `id` or `client` too long, an unknown club or player, or a second pairing request while one is waiting |
+| `bad_request` | Malformed JSON, unknown message type, a missing `command`, a value out of range, `id` or `client` too long, an unknown club or player, a second pairing request while one is waiting, or a `pair` without a token on a connection that is already paired |
 
 A `not_ready` response caused by readiness repeats the current blockers so you do not have to go
 looking. A `not_ready` for a `playerId` that is not the active player, or when no round is running,
@@ -867,15 +929,22 @@ carries a message only.
 
 ### Connection close codes
 
-Each of these is preceded by a `response` (`unauthorised`, or `rate_limited` for the cooldown) so
-your client can log the reason before the socket goes.
+Each of these is preceded by a `response` (`unauthorised`, `forbidden_scope` when new apps are
+turned off, or `rate_limited` for the cooldown) so your client can log the reason before the socket
+goes. The one exception is `4429` for too many connections, which closes the socket before `hello`
+with no response.
 
 | Code | Meaning | What to do |
 |---|---|---|
 | `4401` | Token rejected, or the player removed your app | Delete your saved token and pair again |
-| `4403` | The player denied your request, or has turned off new apps | Tell the user, do not retry automatically |
+| `4403` | The player denied your request (including *Stop asking*), or has turned off new apps | Tell the user, do not retry automatically |
 | `4408` | Approval timed out | Offer a retry button |
 | `4429` | Too many pairing attempts (see `retryAfterMs`), or too many connections (no `hello` was sent) | Back off before retrying |
+
+When the player changes **Allow Apps From** or turns accessories off, Pureplay restarts its server
+and drops every connection without a close frame. Your client sees `1006` (abnormal closure), the
+same as when the game exits. Your token is still valid: reconnect with backoff and send it in `pair`.
+If the player turned accessories off, the reconnect is refused until they turn them back on.
 
 ---
 
@@ -975,8 +1044,8 @@ or the examples.
 
 Nothing in Version 1 is in a public Pureplay release yet. Everything below exists in Pureplay
 development builds. **Verified** means it has been exercised end to end against a live game.
-**Built** means the code is in place and covered by automated tests, with the in-game pass still
-to run. **Planned** means designed, not built. This table is updated as parts land.
+**Built** means the code is in place, with the in-game pass still to run. **Planned** means
+designed, not built. This table is updated as parts land.
 
 | Area | Status | Notes |
 |---|---|---|
@@ -985,11 +1054,18 @@ to run. **Planned** means designed, not built. This table is updated as parts la
 | Pairing: approval prompt, `pairing.pending`, saved tokens | Verified | |
 | Settings > Accessories: turning the API on, removing an app, the three switches | Verified | |
 | Pairing cooldown, connection limit, close codes `4401`, `4403`, `4408`, `4429` | Verified | |
+| `pair` refused with new apps turned off closes `4403`; "Already paired." | Verified | |
 | `subscribe`, event filters, `snapshot: true`, `state.get`, envelope and `seq` | Verified | |
-| All 24 events with the payloads in this document | Built | |
-| Snapshot with `null` sections and every documented field | Built | |
-| `aim.set`, `aim.nudge`, `aim.reset`, `club.next`, `club.reset` | Verified | Replies carry the resulting club and `clubId` |
+| Case-insensitive event and command names; `id: null` on responses with no id to echo | Verified | |
+| All 26 events with the payloads in this document | Built | Lifecycle, shot, turn, hole and score events verified in a single-player round |
+| `match.paused`, `match.resumed` | Built | Not sent by current builds: nothing pauses a round |
+| `lie.changed` on joined machines, once per shot after the host's rest | Built | |
+| `hole.started.yards` from the shared tee, `null` for mixed tees | Verified | |
+| Snapshot with `null` sections and every documented field, `session.paused`, `shot` `null` between shots | Verified | The between-shots state lasts only a few frames |
+| `aim.set`, `aim.nudge`, `club.next` | Verified | Replies carry the resulting club and `clubId` |
+| `aim.reset` and `club.reset` as Pureplay's defaults; `allowedCommands` reflecting drills and club suggestion; `not_allowed` | Verified | |
 | `club.set` by `clubId`, `club.prev`, aim replies carrying the resulting `aim`, `id` and `client` length limits | Built | |
-| Rate limit of 20 per second, burst 40; `deltaDeg` clamp; rejection codes | Verified | |
+| Rate limit of 20 per second, burst 40; `deltaDeg` clamp | Verified | |
+| Rejection codes | Verified | |
 | Rejecting `aim.set` targets outside the playable area | Planned | Only non-numeric targets are rejected today |
 | `players[].bag`, `player.bag_changed` | Built | |

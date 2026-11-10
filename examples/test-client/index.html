@@ -195,8 +195,9 @@
         <button id="btnClubReset" disabled>club.reset</button>
       </div>
       <p class="note">
-        <code>aim.reset</code> / <code>club.reset</code> restore the value the shot had
-        <em>before this API first changed it</em>, not the game default.
+        <code>aim.reset</code> / <code>club.reset</code> apply Pureplay's default aim and suggested
+        club for the ball where it lies (what the turn start applies). Not available when absent from
+        <code>allowedCommands</code> (a drill that aims for the player; club suggestion off): <code>not_allowed</code>.
       </p>
     </div>
 
