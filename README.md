@@ -4,6 +4,8 @@ Pureplay Accessory is a WebSocket API for apps that follow a round of golf in Pu
 happens - and, if the player allows it, help them line up by changing aim and club. It never plays
 the shot for them.
 
+By using the Pureplay Accessory API you agree to the Pureplay Accessory API Terms in TERMS.md.
+
 ## What you can build
 
 - stream overlays, scoreboards and shot tracers
