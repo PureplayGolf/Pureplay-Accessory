@@ -1,6 +1,6 @@
 # Pureplay Accessory API Terms
 
-**Version 1, November 2026**
+**Version 1.1, November 2026**
 
 These terms apply to anyone who uses the Pureplay Accessory API. Please read them before you build. By using the API you agree to these terms. If you do not agree, do not use the API. If you use the API for a company, you agree to them for that company too.
 
@@ -30,11 +30,11 @@ These terms apply to anyone who uses the Pureplay Accessory API. Please read the
 
 3.3 You must not copy, reverse engineer or try to work out how Pureplay calculates ball flight, physics or game play, except to the extent the law allows despite this term.
 
-3.4 You must not try to get around player pairing, scopes, player settings or rate limits, play a shot, send or change launch data, get data from Pureplay other than through the API, or modify Pureplay, except to the extent the law allows despite this term.
+3.4 You must not try to get around player pairing, scopes, player settings, rate limits, app registration or keys, play a shot, send or change launch data, get data from Pureplay other than through the API, or modify Pureplay, except to the extent the law allows despite this term.
 
 3.5 You must not sell or rent data from the API, or collect it from players who have not approved your app. You may share it only to show it to the player or people the player chooses, such as their stream viewers or their coach.
 
-3.6 You must not use the API in a way that is unlawful, breaks the Pureplay Terms of Service, or is meant to damage Pureplay, its systems or its players.
+3.6 You must not use the API in a way that is unlawful, breaks the Pureplay Terms of Service, lets you or anyone else cheat or gain an unfair advantage in Pureplay, or is meant to damage Pureplay, its systems or its players.
 
 ## 4. Players and their data
 
@@ -66,7 +66,7 @@ These terms apply to anyone who uses the Pureplay Accessory API. Please read the
 
 7.1 If you find a security problem in the API or Pureplay, tell us at legal@pureplaygolf.com and give us a reasonable time to fix it before making it public.
 
-7.2 Keep players' pairing tokens secure.
+7.2 Keep players' pairing tokens and your app keys secure. Don't share your app keys or use anyone else's.
 
 7.3 Keep anything we share with you that is not public, such as test builds or plans, confidential.
 

@@ -2,6 +2,8 @@
 
 Version 1 - early access. Revised 2026-11-10.
 
+By using the Pureplay Accessory API you agree to the Pureplay Accessory API Terms in TERMS.md.
+
 > **Status: early access.** Version 1 ships in Pureplay's early-access builds. Until Pureplay leaves
 > early access it can still change in ways that break existing apps; every such change is listed in
 > [Changes](#changes) with the date of the game update that carries it. See
